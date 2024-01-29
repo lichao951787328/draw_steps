@@ -1,0 +1,13 @@
+<launch>
+
+  <node pkg="draw_steps" type="down" name="down" output="screen">
+  
+  </node>
+
+ 
+
+  <!-- Launch RViz with the demo configuration -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find draw_steps)/rviz/down.rviz" >
+  </node>
+
+</launch>
