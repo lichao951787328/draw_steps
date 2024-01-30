@@ -7,6 +7,12 @@
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <Eigen/Core>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <tf2_ros/transform_broadcaster.h>
+#include <geometry_msgs/TransformStamped.h>
 #include <iostream>
 using namespace std;
 struct foot
@@ -50,6 +56,8 @@ int main(int argc, char** argv)
     ros::NodeHandle nh;
     ros::Publisher pub = nh.advertise<grid_map_msgs::GridMap>("map", 1);
     ros::Publisher pub_steps = nh.advertise<visualization_msgs::MarkerArray>("steps", 1);
+    ros::Publisher cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("cloud", 1);
+    tf2_ros::TransformBroadcaster broadcaster;
     std::string bag_file_path = "/home/lichao/Darwin-op/src/draw_steps/data/2024-01-28-19-28-48.bag";// 上楼梯
     std::string topic_name = "/elevation_mapping_ours_navLocalmap/local_map";
 
@@ -59,6 +67,15 @@ int main(int argc, char** argv)
     rosbag::Bag bag;
     bag.open(bag_file_path, rosbag::bagmode::Read);
 
+    pcl::PointCloud<pcl::PointXYZ> cloud;
+    // pcl::io::loadPCDFile<pcl::PointXYZ>("/home/lichao/Darwin-op/src/draw_steps/data/scans.pcd", cloud);
+    string pcd_file_path = "/home/lichao/Darwin-op/src/draw_steps/data/scans.pcd";
+    if (pcl::io::loadPCDFile<pcl::PointXYZ>(pcd_file_path, cloud) == -1)
+    {
+        PCL_ERROR("Couldn't read file %s\n", pcd_file_path.c_str());
+        return -1;
+    }
+    
     rosbag::View view(bag, rosbag::TopicQuery(topic_name));
     vector<grid_map::GridMap> maps;
     BOOST_FOREACH(rosbag::MessageInstance const& msg, view) {
@@ -257,13 +274,46 @@ int main(int argc, char** argv)
 
     int index = 0;
     ros::Rate loop_rate(0.625);
+    double pianyi_x = 0;
+    double step_pianyi = 0;
     while (ros::ok() && index < chooseMaps.size())
     {
         grid_map_msgs::GridMap pub_msg;
         grid_map::GridMapRosConverter::toMessage(chooseMaps.at(index), pub_msg);
+        pub_msg.info.header.stamp = ros::Time::now();
         pub_msg.info.header.frame_id = "map";
         pub.publish(pub_msg);
 
+        // Eigen::Affine3f transform = Eigen::Affine3f::Identity();
+        // transform.translation() << -0.01-(map_foots.at(index).begin()->x), 0, (0.7217 + 0.69);
+
+        geometry_msgs::TransformStamped transformStamped;
+        transformStamped.header.frame_id = "world";  // 父坐标系
+        transformStamped.child_frame_id = "map";  // 子坐标系
+        transformStamped.header.stamp = ros::Time::now();
+        if (map_foots.at(index).begin()->is_left == true)
+        {
+            step_pianyi = map_foots.at(index).begin()->x/3;
+            pianyi_x += map_foots.at(index).begin()->x - step_pianyi;
+        }
+        else
+        {
+            pianyi_x += step_pianyi;
+        }
+        
+        transformStamped.transform.translation.x = 0.01 + pianyi_x;
+        transformStamped.transform.translation.y = 0;
+        transformStamped.transform.translation.z = -(0.7217 + 0.69);
+        transformStamped.transform.rotation.x = 0.0;
+        transformStamped.transform.rotation.y = 0.0;
+        transformStamped.transform.rotation.z = 0.0;
+        transformStamped.transform.rotation.w = 1.0;
+        broadcaster.sendTransform(transformStamped);
+        sensor_msgs::PointCloud2 cloud_msg;
+        pcl::toROSMsg(cloud, cloud_msg);
+        cloud_msg.header.frame_id = "world";
+        cloud_msg.header.stamp = ros::Time::now();
+        cloud_pub.publish(cloud_msg);
         // visualization_msgs::MarkerArray model_markers;
         // model_markers.markers.resize(0);
         // visualization_msgs::Marker model_marker;
@@ -336,6 +386,7 @@ int main(int argc, char** argv)
             model_marker.header.frame_id = "map";  // 设置坐标系
             model_marker.id = i;
             model_marker.type = visualization_msgs::Marker::MESH_RESOURCE;  // 表示网格模型
+            model_marker.header.stamp = ros::Time::now();
             Eigen::AngleAxisd ad_roll(map_foots.at(index).at(i).roll, Eigen::Vector3d::UnitX());
             Eigen::AngleAxisd ad_pitch(map_foots.at(index).at(i).pitch, Eigen::Vector3d::UnitY());
             Eigen::AngleAxisd ad_yaw(map_foots.at(index).at(i).yaw, Eigen::Vector3d::UnitZ());
